@@ -47,7 +47,7 @@ class FlazioInterceptor:
             pass
 
 
-async def crawl_site(page, start_url, max_pages=50, is_flazio=False):
+async def crawl_site(page, start_url, max_pages=50, is_flazio=False, original_domain_name=None):
     domain = get_domain(start_url)
     visited = set()
     queue = [start_url]
@@ -61,7 +61,11 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False):
     
     # Crea cartelle screenshot
     import os
-    safe_domain = domain.replace("www.", "")
+    if original_domain_name:
+        safe_domain = original_domain_name
+    else:
+        safe_domain = domain.replace("www.", "")
+        
     screenshot_dir = os.path.join("results", safe_domain, "screenshots", "flazio" if is_flazio else "original")
     os.makedirs(screenshot_dir, exist_ok=True)
     
@@ -517,17 +521,18 @@ async def main():
         print(f"[*] Originale: {original_url}")
         print(f"[*] Importato: {imported_url}\n")
         
+        original_domain = get_domain(original_url)
+        safe_domain_name = original_domain.replace("www.", "")
+        
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             context = await browser.new_context() # Niente viewport fisso, non scattiamo foto
             page = await context.new_page()
             
-            original_site_data = await crawl_site(page, original_url, max_pages=args.max_pages)
-            imported_site_data = await crawl_site(page, imported_url, max_pages=args.max_pages, is_flazio=True)
+            original_site_data = await crawl_site(page, original_url, max_pages=args.max_pages, original_domain_name=safe_domain_name)
+            imported_site_data = await crawl_site(page, imported_url, max_pages=args.max_pages, is_flazio=True, original_domain_name=safe_domain_name)
             
             await browser.close()
-            
-        original_domain = get_domain(original_url)
         
         print("[*] Ricerca link rotti e riferimenti al vecchio dominio...")
         link_errors = analyze_links(original_domain, imported_site_data)
