@@ -14,6 +14,7 @@ import ai_analyzer
 from dotenv import load_dotenv
 import urllib.parse
 import urllib.request
+import urllib.error
 import re
 from bs4 import BeautifulSoup
 import json
@@ -325,6 +326,7 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False, original_do
                 "videos": videos,
                 "images_ratios": images_ratios,
                 "design_system": design_system,
+                "anchors": [tag['id'] for tag in soup.find_all(id=True) if tag.get('id')] + [tag['name'] for tag in soup.find_all("a", attrs={"name": True}) if tag.get('name')],
                 "text": text_content,
                 "title": soup.title.string if soup.title else "Nessun Titolo"
             }
@@ -360,9 +362,25 @@ def analyze_links(original_domain, imported_site_data):
             elif "flazio.com" in link_domain or "flazio.org" in link_domain:
                 internal_links.add((path, link))
                 
+            # Validazione Ancore (Fragment) all'interno dello stesso sito importato
+            parsed_link = urllib.parse.urlparse(link)
+            if parsed_link.fragment and ("flazio.com" in link_domain or "flazio.org" in link_domain):
+                target_path = parsed_link.path if parsed_link.path else "/"
+                if target_path in imported_site_data:
+                    target_anchors = imported_site_data[target_path].get("anchors", [])
+                    if parsed_link.fragment not in target_anchors:
+                        ctx = data.get("link_contexts", {}).get(link, "")
+                        ctx_str = f" in **{ctx}**" if ctx else ""
+                        errors.append({
+                            "path": path,
+                            "type": "Ancora Inesistente",
+                            "severity": "Media",
+                            "icon": "🔗",
+                            "detail": f"Il link punta all'ancora `#{parsed_link.fragment}`{ctx_str} sulla pagina `{target_path}`, ma quell'elemento non esiste nel sito importato.",
+                            "ai_feedback": ""
+                        })
+                        
     # Check 404 per i link interni
-    import urllib.request
-    import urllib.error
     
     checked = {}
     for path, link in internal_links:
