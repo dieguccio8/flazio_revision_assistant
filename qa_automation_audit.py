@@ -17,11 +17,39 @@ def get_path(url):
 def normalize_url(base_url, link_href):
     return urllib.parse.urljoin(base_url, link_href)
 
-async def crawl_site(page, start_url, max_pages=50):
+import json
+
+class FlazioInterceptor:
+    def __init__(self):
+        self.current_page = None
+        self.intercepted_data = {}
+
+    async def handle_response(self, response):
+        try:
+            url = response.url
+            if ".xml" in url and ("flazio.com" in url or "flazio.org" in url):
+                if response.status == 200:
+                    text = await response.text()
+                    try:
+                        data = json.loads(text)
+                        if self.current_page:
+                            if self.current_page not in self.intercepted_data:
+                                self.intercepted_data[self.current_page] = []
+                            self.intercepted_data[self.current_page].append(data)
+                    except json.JSONDecodeError:
+                        pass
+        except Exception:
+            pass
+
+async def crawl_site(page, start_url, max_pages=50, is_flazio=False):
     domain = get_domain(start_url)
     visited = set()
     queue = [start_url]
     site_data = {} # path -> data
+    
+    interceptor = FlazioInterceptor()
+    if is_flazio:
+        page.on("response", interceptor.handle_response)
     
     print(f"[*] Inizio discovery e crawling del dominio: {domain}")
     
@@ -57,24 +85,29 @@ async def crawl_site(page, start_url, max_pages=50):
         visited.add(current_url)
         print(f"    - Scraping pagina: {current_url}")
         
+        path = get_path(current_url)
+        interceptor.current_page = path
+        
         try:
             # wait_until="load" è molto più stabile
             await page.goto(current_url, wait_until="load", timeout=30000)
             
-            # Essenziale per Flazio: attendiamo che JavaScript costruisca la pagina prima di leggere l'HTML
-            await page.wait_for_timeout(3000)
+            if is_flazio:
+                # Flazio usa XHR per caricare i JSON dei componenti, aspettiamo che le richieste finiscano
+                await page.wait_for_load_state("networkidle")
+            else:
+                # Per il sito classico aspettiamo il rendering
+                await page.wait_for_timeout(3000)
             
-            # NON FACCIAMO PIU' SCREENSHOT -> Lo scraper ora è molto più veloce
             html_content = await page.content()
             soup = BeautifulSoup(html_content, "html.parser")
             
-            # Extract links and videos
+            # Extract links
             links = []
-            videos = len(soup.find_all(['iframe', 'video', 'embed']))
             for a_tag in soup.find_all("a", href=True):
                 href = a_tag["href"]
                 
-                # Supporto per i menu proprietari di Flazio (javascript:main.btnClickTesto('nomepagina$id'))
+                # Supporto per i menu proprietari di Flazio
                 if href.startswith("javascript:main.btnClickTesto"):
                     match = re.search(r"btnClickTesto\('([^'$]+)", href)
                     if match:
@@ -89,23 +122,47 @@ async def crawl_site(page, start_url, max_pages=50):
                     
                 links.append(full_link)
                 
-                # Add to queue if it's same domain
+                # Add to queue se è stesso dominio
                 if get_domain(full_link) == domain and full_link not in visited and full_link not in queue:
-                    # Skip assets
                     if not full_link.lower().endswith(('.pdf', '.jpg', '.png', '.zip', '.mp4')):
                         queue.append(full_link)
             
-            # Extract text (pulizia aggressiva di script, stili e metadata invisibili)
-            for element in soup(["script", "style", "noscript", "meta", "link", "head"]):
-                element.extract()
-            text_content = soup.get_text(separator=' ', strip=True)
+            if is_flazio:
+                # Estrazione NATIVA dal JSON di Flazio intercettato
+                videos = 0
+                text_content = ""
+                
+                def parse_component(comp):
+                    nonlocal videos, text_content
+                    t = comp.get("t", "")
+                    if t in ["video", "youtube", "vimeo"]:
+                        videos += 1
+                    elif t == "testo":
+                        # Flazio salva il testo in c_testo come HTML
+                        html_text = comp.get("c_testo", "")
+                        if html_text:
+                            clean_text = BeautifulSoup(html_text, "html.parser").get_text(separator=' ', strip=True)
+                            text_content += clean_text + " "
+                    
+                    if "componenti" in comp:
+                        for child in comp["componenti"]:
+                            parse_component(child)
+                
+                if path in interceptor.intercepted_data:
+                    for json_data in interceptor.intercepted_data[path]:
+                        parse_component(json_data)
+                        
+            else:
+                # Estrazione HTML classica
+                videos = len(soup.find_all(['iframe', 'video', 'embed']))
+                for element in soup(["script", "style", "noscript", "meta", "link", "head"]):
+                    element.extract()
+                text_content = soup.get_text(separator=' ', strip=True)
             
-            # Se la pagina è completamente vuota o è un PDF (che Playwright talvolta prova a parsare prima del download)
             if len(text_content) < 5 and len(links) == 0:
                 print(f"    - [Avviso] Pagina vuota o non testuale saltata: {current_url}")
                 continue
             
-            path = get_path(current_url)
             site_data[path] = {
                 "url": current_url,
                 "html": html_content,
@@ -119,6 +176,9 @@ async def crawl_site(page, start_url, max_pages=50):
             if "Download is starting" not in str(e):
                 print(f"    [!] Errore nel caricamento di {current_url}: {e}")
             continue
+            
+    if is_flazio:
+        page.remove_listener("response", interceptor.handle_response)
             
     return site_data
 
@@ -226,7 +286,7 @@ async def main():
         page = await context.new_page()
         
         original_site_data = await crawl_site(page, original_url, max_pages=args.max_pages)
-        imported_site_data = await crawl_site(page, imported_url, max_pages=args.max_pages)
+        imported_site_data = await crawl_site(page, imported_url, max_pages=args.max_pages, is_flazio=True)
         
         await browser.close()
         

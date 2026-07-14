@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testi>
+	<form_submit><![CDATA[Schicken]]></form_submit>
+	<form_upload><![CDATA[Datei hochladen]]></form_upload>
+	<form_success><![CDATA[Ihre Nachricht wurde gesendet!]]></form_success>
+	<form_error_required><![CDATA[Dieses Feld ist erforderlich]]></form_error_required>
+	<form_error_email><![CDATA[Bitte geben Sie eine gültige E-Mail-Adresse ein]]></form_error_email>
+	<form_privacy><![CDATA[Ich akzeptiere die Datenschutzrichtlinie.]]></form_privacy>
+	<add><![CDATA[Hinzufügen]]></add>
+	<testo><![CDATA[Ziehen Sie Elemente in das Formular.]]></testo>
+	<etichetta><![CDATA[Etikett]]></etichetta>
+	<etichettadesc><![CDATA[Weisen Sie dem Formular eine Bezeichnung zu, um Anfragen zu filtern.]]></etichettadesc>
+	<indirizzodesc><![CDATA[Geben Sie die Adresse ein, an die E-Mails von diesem Formular gesendet werden sollen.]]></indirizzodesc>
+	<obbligatori><![CDATA[Pflichtfelder]]></obbligatori>
+	<obbligatoridesc><![CDATA[Wählen Sie aus, welche Felder für das Absenden der Anfrage obligatorisch sind.]]></obbligatoridesc>
+	<autoresponder><![CDATA[Automatische Antwort]]></autoresponder>
+	<autoresponderattiva><![CDATA[Automatische Antwort aktivieren]]></autoresponderattiva>
+	<autoresponderdesc><![CDATA[Verfassen Sie einen Text und senden Sie ihn als automatische Antwort an alle, die Sie kontaktieren.]]></autoresponderdesc>
+	<postinvio><![CDATA[Rückmeldung]]></postinvio>
+	<messaggionuovo><![CDATA[Zeigt eine Meldung an, dass die Anfrage angenommen wurde.]]></messaggionuovo>
+	<pagdestd><![CDATA[Wählen Sie die Seite aus, auf die der Besucher nach dem Absenden der Anfrage weitergeleitet werden soll.]]></pagdestd>
+	<tracking><![CDATA[Tracking]]></tracking>
+	<attivatracking><![CDATA[Tracking aktivieren]]></attivatracking>
+	<font><![CDATA[Schriftart]]></font>
+	<campi><![CDATA[Felder]]></campi>
+	<stymenu><![CDATA[Taste]]></stymenu>
+	<labelfont><![CDATA[Schriftart]]></labelfont>
+	<labelsize><![CDATA[Größe]]></labelsize>
+	<labelcolor><![CDATA[Farbe]]></labelcolor>
+	<sizeup><![CDATA[Schriftgröße vergrößern]]></sizeup>
+	<sizedown><![CDATA[Schriftgröße verkleinern]]></sizedown>
+	<bordi><![CDATA[Kanten]]></bordi>
+	<bordicol><![CDATA[Rahmenfarbe]]></bordicol>
+	<bordidim><![CDATA[Rahmengröße]]></bordidim>
+	<bordiarr><![CDATA[Rundung der Ränder]]></bordiarr>
+	<soloinferiore><![CDATA[Nur den unteren Rand anzeigen]]></soloinferiore>
+	<grafica><![CDATA[Farben]]></grafica>
+	<csfondocampi><![CDATA[Feldfarben]]></csfondocampi>
+	<csfondobtn><![CDATA[Knopffarbe]]></csfondobtn>
+	<btnsfumato><![CDATA[Farbverlauf-Schaltfläche]]></btnsfumato>
+	<presets><![CDATA[Standardstile]]></presets>
+	<descstile><![CDATA[Wählen Sie einen anpassbaren Stil]]></descstile>
+	<custom><![CDATA[Maßgeschneidert]]></custom>
+	<squared><![CDATA[Quadrat]]></squared>
+	<radied><![CDATA[Abgerundete Ecken]]></radied>
+	<rounded><![CDATA[Gerundet]]></rounded>
+	<transparent><![CDATA[Quadrat ohne Hintergrund]]></transparent>
+	<squaredunderline><![CDATA[Nur am unteren Rand, quadratischer Knopf]]></squaredunderline>
+	<roundedunderline><![CDATA[Nur die Unterkante, abgerundeter Knopf]]></roundedunderline>
+	<privacy><![CDATA[Datenschutzrichtlinie]]></privacy>
+	<privacydesc><![CDATA[Ich stimme der Verarbeitung meiner personenbezogenen Daten durch den Inhaber dieser Website zu.]]></privacydesc>
+	<layoutmode><![CDATA[Layout]]></layoutmode>
+	<layoutmodedesc><![CDATA[Wählen Sie den Formularlayoutmodus.]]></layoutmodedesc>
+	<layoutlibero><![CDATA[Frei]]></layoutlibero>
+	<layoutgriglia><![CDATA[Grill]]></layoutgriglia>
+	<gridgap><![CDATA[Feldabstand]]></gridgap>
+	<testoinvio><![CDATA[Vielen Dank für Ihre Kontaktaufnahme!]]></testoinvio>
+	<csfondo><![CDATA[Hintergrundfarbe]]></csfondo>
+	<form_field_invalid><![CDATA[Ungültiges Feld]]></form_field_invalid>
+	<reorder_elements><![CDATA[Elemente neu anordnen]]></reorder_elements>
+	<add_option><![CDATA[Option hinzufügen]]></add_option>
+	<option_placeholder><![CDATA[Option...]]></option_placeholder>
+	<loading><![CDATA[Laden...]]></loading>
+	<close><![CDATA[Schließen]]></close>
+	<form_yes><![CDATA[Ja]]></form_yes>
+	<form_no><![CDATA[NEIN]]></form_no>
+	<addr_via><![CDATA[Straße]]></addr_via>
+	<addr_provincia><![CDATA[Provinz]]></addr_provincia>
+	<addr_citta><![CDATA[Stadt]]></addr_citta>
+	<addr_cap><![CDATA[PLZ]]></addr_cap>
+</testi>

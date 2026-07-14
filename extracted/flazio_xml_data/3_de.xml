@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testi>
+	<no_content><![CDATA[Kein Inhalt verfügbar]]></no_content>
+	<no_found_videos><![CDATA[In der ausgewählten Playlist wurden keine Videos gefunden]]></no_found_videos>
+	<invalid_playlist><![CDATA[Ungültige Wiedergabeliste]]></invalid_playlist>
+	<invalid_playlist_desc><![CDATA[Die ausgewählte Playlist ist ungültig oder nicht mehr verfügbar]]></invalid_playlist_desc>
+	<no_playlist_selected><![CDATA[Keine Playlist ausgewählt]]></no_playlist_selected>
+	<no_playlist_selected_desc><![CDATA[Wählen Sie eine Playlist aus, um Videos anzuzeigen]]></no_playlist_selected_desc>
+	<previous_btn><![CDATA[Rückwärts]]></previous_btn>
+	<next_btn><![CDATA[Nach Ihnen]]></next_btn>
+	<video_title><![CDATA[Videotitel]]></video_title>
+	<go_to_youtube><![CDATA[Zu YouTube]]></go_to_youtube>
+	<view_mode><![CDATA[Ansichtsmodus]]></view_mode>
+	<view_mode_list><![CDATA[Liste]]></view_mode_list>
+	<view_mode_player><![CDATA[Spieler]]></view_mode_player>
+	<col_numbers><![CDATA[Anzahl der Spalten]]></col_numbers>
+	<el_numbers><![CDATA[Anzahl der Videos]]></el_numbers>
+	<enable_pagination><![CDATA[Paginierung aktivieren]]></enable_pagination>
+	<load_more><![CDATA[Mehr laden]]></load_more>
+	<labelsize><![CDATA[Textgröße]]></labelsize>
+	<labelcolor><![CDATA[Textfarbe]]></labelcolor>
+	<labelfont><![CDATA[Textschriftart]]></labelfont>
+	<style_settings><![CDATA[Stileinstellungen]]></style_settings>
+	<layout_settings><![CDATA[Layout-Einstellungen]]></layout_settings>
+</testi>
