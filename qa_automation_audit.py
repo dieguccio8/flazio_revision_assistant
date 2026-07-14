@@ -25,6 +25,7 @@ class FlazioInterceptor:
     def __init__(self):
         self.current_page = None
         self.intercepted_data = {}
+        self.master_data = []
 
     async def handle_response(self, response):
         try:
@@ -34,7 +35,9 @@ class FlazioInterceptor:
                     text = await response.text()
                     try:
                         data = json.loads(text)
-                        if self.current_page:
+                        if "masterPage" in url or "global" in url.lower():
+                            self.master_data.append(data)
+                        elif self.current_page:
                             if self.current_page not in self.intercepted_data:
                                 self.intercepted_data[self.current_page] = []
                             self.intercepted_data[self.current_page].append(data)
@@ -42,6 +45,7 @@ class FlazioInterceptor:
                         pass
         except Exception:
             pass
+
 
 async def crawl_site(page, start_url, max_pages=50, is_flazio=False):
     domain = get_domain(start_url)
@@ -182,7 +186,7 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False):
                             w = float(comp.get("w", 0))
                             h = float(comp.get("h", 0))
                             if w > 10 and h > 10:
-                                images_ratios.append(round(w / h, 2))
+                                images_ratios.append({'w': w, 'h': h, 'ratio': round(w / h, 2)})
                         except (ValueError, TypeError):
                             pass
                     elif t == "testo":
@@ -254,6 +258,11 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False):
                         for child in comp["componenti"]:
                             parse_component(child)
                 
+
+                if interceptor.master_data:
+                    for json_data in interceptor.master_data:
+                        parse_component(json_data)
+                
                 if path in interceptor.intercepted_data:
                     for json_data in interceptor.intercepted_data[path]:
                         parse_component(json_data)
@@ -274,11 +283,11 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False):
                 images_ratios = []
                 try:
                     js_ratios = await page.evaluate('''() => {
-                        return Array.from(document.querySelectorAll('img')).map(img => {
+                                                return Array.from(document.querySelectorAll('img')).map(img => {
                             let w = img.width || img.clientWidth || img.naturalWidth;
                             let h = img.height || img.clientHeight || img.naturalHeight;
-                            return (w > 10 && h > 10) ? Number((w / h).toFixed(2)) : 0;
-                        }).filter(r => r > 0);
+                            return (w > 10 && h > 10) ? {w: Math.round(w), h: Math.round(h), ratio: Number((w / h).toFixed(2))} : null;
+                        }).filter(r => r !== null);
                     }''')
                     images_ratios = js_ratios
                 except Exception:
@@ -316,15 +325,39 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False):
 
 def analyze_links(original_domain, imported_site_data):
     errors = []
+    internal_links = set()
     
     for path, data in imported_site_data.items():
         for link in data["links"]:
             link_domain = get_domain(link)
-            # Se un link nel sito IMPORTATO punta al dominio ORIGINALE, è un errore grave (utente esce dal nuovo sito)
             if link_domain == original_domain:
                 ctx = data.get("link_contexts", {}).get(link, "")
                 ctx_str = f" in **{ctx}**" if ctx else ""
-                errors.append(f"| Pagina {path} | Errore Link (Cross-Domain) | Alta | Il link `{link}`{ctx_str} punta ancora al vecchio dominio originale. Da correggere. |")
+                errors.append(f"| Pagina {path} | <span style='color: #dc3545; font-weight: bold;'>🔴 Errore Link (Cross-Domain)</span> | Alta | Il link `{link}`{ctx_str} punta ancora al vecchio dominio originale. Da correggere. |")
+            elif "flazio.com" in link_domain or "flazio.org" in link_domain:
+                internal_links.add((path, link))
+                
+    # Check 404 per i link interni
+    import urllib.request
+    import urllib.error
+    
+    checked = {}
+    for path, link in internal_links:
+        if link not in checked:
+            try:
+                req = urllib.request.Request(link, method='HEAD', headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    checked[link] = response.status
+            except urllib.error.HTTPError as e:
+                checked[link] = e.code
+            except Exception:
+                checked[link] = 500
+                
+        if checked[link] in [404, 500]:
+            ctx = imported_site_data[path].get("link_contexts", {}).get(link, "")
+            ctx_str = f" in **{ctx}**" if ctx else ""
+            errors.append(f"| Pagina {path} | <span style='color: #dc3545; font-weight: bold;'>🔴 Link Rotto (404)</span> | Critica | Il link interno `{link}`{ctx_str} porta a una pagina inesistente o in errore. |")
+            
     return errors
 
 def analyze_structure(original_site_data, imported_site_data, original_domain):
@@ -332,7 +365,7 @@ def analyze_structure(original_site_data, imported_site_data, original_domain):
     
     for path, orig_data in original_site_data.items():
         if path not in imported_site_data:
-            errors.append(f"| Pagina {path} | Pagina Mancante | Alta | Questa pagina esiste nel sito originale ma NON è stata trovata nell'importato. |")
+            errors.append(f"| Pagina {path} | <span style='color: #fd7e14; font-weight: bold;'>🟠 Pagina Mancante</span> | Alta | Questa pagina esiste nel sito originale ma NON è stata trovata nell'importato. |")
             continue
             
         imp_data = imported_site_data[path]
@@ -344,13 +377,13 @@ def analyze_structure(original_site_data, imported_site_data, original_domain):
         if orig_len > 0:
             diff_ratio = (imp_len / orig_len) * 100
             if diff_ratio < 60:
-                errors.append(f"| Pagina {path} | Testo Mancante | Media | Il sito importato ha molto meno testo ({imp_len} char) rispetto all'originale ({orig_len} char). Controlla se mancano sezioni. |")
+                errors.append(f"| Pagina {path} | <span style='color: #fd7e14; font-weight: bold;'>🟠 Testo Mancante</span> | Media | Il sito importato ha molto meno testo ({imp_len} char) rispetto all'originale ({orig_len} char). Controlla se mancano sezioni. |")
                 
         # Check Video
         orig_vid = orig_data.get('videos', 0)
         imp_vid = imp_data.get('videos', 0)
         if orig_vid > imp_vid:
-            errors.append(f"| Pagina {path} | Video Mancanti | Alta | Trovati solo {imp_vid} video/iframe rispetto ai {orig_vid} dell'originale. |")
+            errors.append(f"| Pagina {path} | <span style='color: #0d6efd; font-weight: bold;'>🔵 Video Mancanti</span> | Alta | Trovati solo {imp_vid} video/iframe rispetto ai {orig_vid} dell'originale. |")
 
         
         # Check Design System
@@ -367,7 +400,7 @@ def analyze_structure(original_site_data, imported_site_data, original_domain):
             if len(missing_fonts) > 0 and len(imp_fonts) > 0:
                 # Controlliamo solo se differiscono *completamente* (nessun font in comune)
                 if len(orig_fonts.intersection(imp_fonts)) == 0:
-                    errors.append(f"| Pagina {path} | Design System (Font) | Bassa | I font sembrano essere cambiati. Originale usava: `{', '.join(orig_fonts)}`, Flazio usa: `{', '.join(imp_fonts)}`. |")
+                    errors.append(f"| Pagina {path} | <span style='color: #6f42c1; font-weight: bold;'>🟣 Design System (Font)</span> | Bassa | I font sembrano essere cambiati. Originale usava: `{', '.join(orig_fonts)}`, Flazio usa: `{', '.join(imp_fonts)}`. |")
 
         # Check immagini (Aspect Ratio)
         orig_ratios = orig_data.get('images_ratios', [])
@@ -376,13 +409,16 @@ def analyze_structure(original_site_data, imported_site_data, original_domain):
         if orig_ratios and imp_ratios:
             # Conta quanti aspect ratio originali non trovano una corrispondenza tollerabile (±0.15) nel sito importato
             distorted = 0
-            for o_r in orig_ratios:
-                if not any(abs(o_r - i_r) < 0.15 for i_r in imp_ratios):
+            distorted_details = []
+            for o_img in orig_ratios:
+                if not any(abs(o_img['ratio'] - i_img['ratio']) < 0.15 for i_img in imp_ratios):
                     distorted += 1
+                    distorted_details.append(f"{int(o_img['w'])}x{int(o_img['h'])}")
             
             # Se più del 30% delle immagini ha un aspect ratio non trovato, segnala possibile crop
             if distorted > 0 and (distorted / len(orig_ratios)) > 0.3:
-                errors.append(f"| Pagina {path} | Immagini Distorte/Tagliate | Media | Rilevate {distorted} immagini con proporzioni originali (Aspect Ratio) perse nel nuovo sito. Controlla ritagli o deformazioni. |")
+                imp_sizes = ", ".join([f"{int(i['w'])}x{int(i['h'])}" for i in imp_ratios[:5]])
+                errors.append(f"| Pagina {path} | <span style='color: #0d6efd; font-weight: bold;'>🔵 Immagini Distorte/Tagliate</span> | Media | Rilevate {distorted} immagini deformate. Misure originali perse: `{', '.join(distorted_details[:5])}`. Trovate su Flazio: `{imp_sizes}`... Controlla i ritagli. |")
 
         # --- VISUAL REGRESSION ---
         safe_domain = original_domain.replace("www.", "")
@@ -397,7 +433,7 @@ def analyze_structure(original_site_data, imported_site_data, original_domain):
         
         if diff_percent > 15.0:
             diff_abs_path = os.path.abspath(diff_img_path)
-            errors.append(f"| Pagina {path} | Visual Regression | Media | Trovata forte deviazione grafica ({diff_percent:.1f}% di pixel diversi). [Vedi Diff]({diff_abs_path}) |")
+            errors.append(f"| Pagina {path} | <span style='color: #6f42c1; font-weight: bold;'>🟣 Visual Regression</span> | Media | Trovata forte deviazione grafica ({diff_percent:.1f}% di pixel diversi). [Vedi Diff]({diff_abs_path}) |")
 
         # (Rimosso il controllo sul numero dei link perché Flazio usa <li> con Javascript invece di <a>,
         # generando falsi positivi nel confronto matematico)
@@ -408,6 +444,22 @@ def generate_report(link_errors, structure_errors):
     total_errors = len(link_errors) + len(structure_errors)
     
     report = f"""# Report di QA Automation - Migrazione Flazio (Analisi Deterministica Potenziata)
+
+<style>
+  table {{
+    width: 100% !important;
+    table-layout: fixed;
+  }}
+  th, td {{
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    white-space: normal;
+  }}
+  th:nth-child(1) {{ width: 20%; }} /* Elemento */
+  th:nth-child(2) {{ width: 15%; }} /* Tipo di Errore */
+  th:nth-child(3) {{ width: 10%; }} /* Gravità */
+  th:nth-child(4) {{ width: 55%; }} /* Dettaglio */
+</style>
 
 ## Sintesi Iniziale
 - **Totale anomalie riscontrate**: {total_errors}
