@@ -344,7 +344,14 @@ def analyze_links(original_domain, imported_site_data):
             if link_domain == original_domain:
                 ctx = data.get("link_contexts", {}).get(link, "")
                 ctx_str = f" in **{ctx}**" if ctx else ""
-                errors.append(f"| Pagina {path} | <span style='color: #dc3545; font-weight: bold;'>🔴 Errore Link (Cross-Domain)</span> | Alta | Il link `{link}`{ctx_str} punta ancora al vecchio dominio originale. Da correggere. |")
+                errors.append({
+                    "path": path,
+                    "type": "Errore Link (Cross-Domain)",
+                    "severity": "Alta",
+                    "icon": "🔴",
+                    "detail": f"Il link `{link}`{ctx_str} punta ancora al vecchio dominio originale. Da correggere.",
+                    "ai_feedback": ""
+                })
             elif "flazio.com" in link_domain or "flazio.org" in link_domain:
                 internal_links.add((path, link))
                 
@@ -367,7 +374,14 @@ def analyze_links(original_domain, imported_site_data):
         if checked[link] in [404, 500]:
             ctx = imported_site_data[path].get("link_contexts", {}).get(link, "")
             ctx_str = f" in **{ctx}**" if ctx else ""
-            errors.append(f"| Pagina {path} | <span style='color: #dc3545; font-weight: bold;'>🔴 Link Rotto (404)</span> | Critica | Il link interno `{link}`{ctx_str} porta a una pagina inesistente o in errore. |")
+            errors.append({
+                "path": path,
+                "type": "Link Rotto (404)",
+                "severity": "Critica",
+                "icon": "🔴",
+                "detail": f"Il link interno `{link}`{ctx_str} porta a una pagina inesistente o in errore.",
+                "ai_feedback": ""
+            })
             
     return errors
 
@@ -376,7 +390,14 @@ def analyze_structure(original_site_data, imported_site_data, original_domain):
     
     for path, orig_data in original_site_data.items():
         if path not in imported_site_data:
-            errors.append(f"| Pagina {path} | <span style='color: #fd7e14; font-weight: bold;'>🟠 Pagina Mancante</span> | Alta | Questa pagina esiste nel sito originale ma NON è stata trovata nell'importato. |")
+            errors.append({
+                "path": path,
+                "type": "Pagina Mancante",
+                "severity": "Alta",
+                "icon": "🟠",
+                "detail": "Questa pagina esiste nel sito originale ma NON è stata trovata nell'importato.",
+                "ai_feedback": ""
+            })
             continue
             
         imp_data = imported_site_data[path]
@@ -392,15 +413,29 @@ def analyze_structure(original_site_data, imported_site_data, original_domain):
                 # Chiamata AI se il testo differisce pesantemente
                 ai_feedback = ai_analyzer.analyze_content_diff(orig_data['text'], imp_data['text'], path)
                 if ai_feedback and not ai_feedback.startswith("⚠️"):
-                    ai_text_feedback = f"<br><br>🤖 **AI Feedback:** {ai_feedback}"
+                    ai_text_feedback = ai_feedback
                 
-                errors.append(f"| Pagina {path} | <span style='color: #fd7e14; font-weight: bold;'>🟠 Testo Mancante</span> | Media | Il sito importato ha molto meno testo ({imp_len} char) rispetto all'originale ({orig_len} char). Controlla se mancano sezioni.{ai_text_feedback} |")
+                errors.append({
+                    "path": path,
+                    "type": "Testo Mancante",
+                    "severity": "Media",
+                    "icon": "🟠",
+                    "detail": f"Il sito importato ha molto meno testo ({imp_len} char) rispetto all'originale ({orig_len} char). Controlla se mancano sezioni.",
+                    "ai_feedback": ai_text_feedback
+                })
                 
         # Check Video
         orig_vid = orig_data.get('videos', 0)
         imp_vid = imp_data.get('videos', 0)
         if orig_vid > imp_vid:
-            errors.append(f"| Pagina {path} | <span style='color: #0d6efd; font-weight: bold;'>🔵 Video Mancanti</span> | Alta | Trovati solo {imp_vid} video/iframe rispetto ai {orig_vid} dell'originale. |")
+            errors.append({
+                "path": path,
+                "type": "Video Mancanti",
+                "severity": "Alta",
+                "icon": "🔵",
+                "detail": f"Trovati solo {imp_vid} video/iframe rispetto ai {orig_vid} dell'originale.",
+                "ai_feedback": ""
+            })
 
         
         # Check Design System
@@ -417,7 +452,14 @@ def analyze_structure(original_site_data, imported_site_data, original_domain):
             if len(missing_fonts) > 0 and len(imp_fonts) > 0:
                 # Controlliamo solo se differiscono *completamente* (nessun font in comune)
                 if len(orig_fonts.intersection(imp_fonts)) == 0:
-                    errors.append(f"| Pagina {path} | <span style='color: #6f42c1; font-weight: bold;'>🟣 Design System (Font)</span> | Bassa | I font sembrano essere cambiati. Originale usava: `{', '.join(orig_fonts)}`, Flazio usa: `{', '.join(imp_fonts)}`. |")
+                    errors.append({
+                        "path": path,
+                        "type": "Design System (Font)",
+                        "severity": "Bassa",
+                        "icon": "🟣",
+                        "detail": f"I font sembrano essere cambiati. Originale usava: `{', '.join(orig_fonts)}`, Flazio usa: `{', '.join(imp_fonts)}`.",
+                        "ai_feedback": ""
+                    })
 
         # Check immagini (Aspect Ratio)
         orig_ratios = orig_data.get('images_ratios', [])
@@ -435,7 +477,14 @@ def analyze_structure(original_site_data, imported_site_data, original_domain):
             # Se più del 30% delle immagini ha un aspect ratio non trovato, segnala possibile crop
             if distorted > 0 and (distorted / len(orig_ratios)) > 0.3:
                 imp_sizes = ", ".join([f"{int(i['w'])}x{int(i['h'])}" for i in imp_ratios[:5]])
-                errors.append(f"| Pagina {path} | <span style='color: #0d6efd; font-weight: bold;'>🔵 Immagini Distorte/Tagliate</span> | Media | Rilevate {distorted} immagini deformate. Misure originali perse: `{', '.join(distorted_details[:5])}`. Trovate su Flazio: `{imp_sizes}`... Controlla i ritagli. |")
+                errors.append({
+                    "path": path,
+                    "type": "Immagini Distorte/Tagliate",
+                    "severity": "Media",
+                    "icon": "🔵",
+                    "detail": f"Rilevate {distorted} immagini deformate. Misure originali perse: `{', '.join(distorted_details[:5])}`. Trovate su Flazio: `{imp_sizes}`... Controlla i ritagli.",
+                    "ai_feedback": ""
+                })
 
         # --- VISUAL REGRESSION ---
         safe_domain = original_domain.replace("www.", "")
@@ -453,13 +502,20 @@ def analyze_structure(original_site_data, imported_site_data, original_domain):
             
             # Richiedi analisi visiva all'AI se la diff è superiore al 15%
             print(f"    - [AI] Analisi visiva in corso per {path} ({diff_percent:.1f}% diff)...")
-            ai_vision_feedback = ai_analyzer.analyze_visual_regression(orig_img_path, imp_img_path, diff_percent)
+            ai_vision_feedback_raw = ai_analyzer.analyze_visual_regression(orig_img_path, imp_img_path, diff_percent)
             
-            ai_html = ""
-            if ai_vision_feedback and not ai_vision_feedback.startswith("⚠️"):
-                ai_html = f"<br><br>🤖 **AI Vision Feedback:**<br>{ai_vision_feedback}"
+            ai_vision_feedback = ""
+            if ai_vision_feedback_raw and not ai_vision_feedback_raw.startswith("⚠️"):
+                ai_vision_feedback = ai_vision_feedback_raw
             
-            errors.append(f"| Pagina {path} | <span style='color: #6f42c1; font-weight: bold;'>🟣 Visual Regression</span> | Media | Trovata forte deviazione grafica ({diff_percent:.1f}% di pixel diversi). [Vedi Diff]({diff_abs_path}){ai_html} |")
+            errors.append({
+                "path": path,
+                "type": "Visual Regression",
+                "severity": "Media",
+                "icon": "🟣",
+                "detail": f"Trovata forte deviazione grafica ({diff_percent:.1f}% di pixel diversi). [Vedi Diff](file://{diff_abs_path})",
+                "ai_feedback": ai_vision_feedback
+            })
 
         # (Rimosso il controllo sul numero dei link perché Flazio usa <li> con Javascript invece di <a>,
         # generando falsi positivi nel confronto matematico)
@@ -467,52 +523,47 @@ def analyze_structure(original_site_data, imported_site_data, original_domain):
     return errors
 
 def generate_report(link_errors, structure_errors):
-    total_errors = len(link_errors) + len(structure_errors)
+    all_errors = link_errors + structure_errors
+    total_errors = len(all_errors)
     
     report = f"""# Report di QA Automation - Migrazione Flazio (Analisi Deterministica Potenziata)
 
-<style>
-  table {{
-    width: 100% !important;
-    table-layout: fixed;
-  }}
-  th, td {{
-    word-wrap: break-word;
-    overflow-wrap: break-word;
-    white-space: normal;
-  }}
-  th:nth-child(1) {{ width: 20%; }} /* Elemento */
-  th:nth-child(2) {{ width: 15%; }} /* Tipo di Errore */
-  th:nth-child(3) {{ width: 10%; }} /* Gravità */
-  th:nth-child(4) {{ width: 55%; }} /* Dettaglio */
-</style>
-
-## Sintesi Iniziale
+## 📊 Sintesi Quantitativa
 - **Totale anomalie riscontrate**: {total_errors}
-- *Nota: Questa analisi matematica confronta pagine, quantità di testi e destinazione dei link tra sito originale e importato.*
+- *Nota: Questa analisi matematica e basata su AI confronta pagine, quantità di testi, aspetto visivo e destinazione dei link tra sito originale e importato.*
 
-## Tabella Dettagliata delle Discrepanze
-
-| Elemento | Tipo di Errore | Gravità | Dettaglio / Suggerimento di correzione |
-|----------|----------------|---------|----------------------------------------|
 """
     
-    if link_errors:
-        report += "\n".join(link_errors) + "\n"
-        
-    if structure_errors:
-        report += "\n".join(structure_errors) + "\n"
-        
-    if total_errors == 0:
-        report += "| N/A | Nessun Errore | N/A | Non sono state trovate discrepanze strutturali o link rotti! |\n"
-        
     print("[*] Sintesi AI del report in corso...")
     # Raccogliamo solo gli errori testuali per non superare il limite di token dell'AI
-    raw_errors = "\n".join(link_errors + structure_errors)
+    raw_errors_lines = []
+    for e in all_errors:
+        raw_errors_lines.append(f"{e['path']}: {e['type']} - {e['detail']} {e['ai_feedback']}")
+    raw_errors = "\\n".join(raw_errors_lines)
     ai_summary = ai_analyzer.generate_executive_summary(raw_errors)
     
     if ai_summary and not ai_summary.startswith("⚠️"):
-        report += f"\n## 🤖 Executive Summary (Generato con AI)\n{ai_summary}\n"
+        report += f"## 🤖 Executive Summary (Generato con AI)\\n{ai_summary}\\n\\n---\\n\\n"
+        
+    if total_errors == 0:
+        report += "✅ **Nessun Errore Trovato!** Non sono state trovate discrepanze strutturali o link rotti.\\n"
+    else:
+        # Raggruppiamo gli errori per path
+        from collections import defaultdict
+        grouped_errors = defaultdict(list)
+        for error in all_errors:
+            grouped_errors[error['path']].append(error)
+            
+        for path, page_errors in grouped_errors.items():
+            report += f"## 📄 Pagina: `{path}`\\n\\n"
+            for e in page_errors:
+                report += f"- {e['icon']} **{e['type']}** *(Gravità: {e['severity']})*\\n"
+                report += f"  - **Dettaglio:** {e['detail']}\\n"
+                if e['ai_feedback']:
+                    # Indenta il feedback AI in modo che stia bene nel markdown
+                    ai_fb = e['ai_feedback'].replace("\\n", "\\n    ")
+                    report += f"  - 🤖 **AI Feedback:** {ai_fb}\\n"
+            report += "\\n---\\n\\n"
         
     report += """
 ## Azioni Correttive Prioritarie
