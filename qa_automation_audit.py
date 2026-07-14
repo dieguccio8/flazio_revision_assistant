@@ -1,16 +1,24 @@
+import warnings
+warnings.filterwarnings("ignore")
+
 import visual_analyzer
 import os
 import argparse
 import asyncio
-import os
+import ai_analyzer
+from dotenv import load_dotenv
 import urllib.parse
 import urllib.request
 import re
 from bs4 import BeautifulSoup
+import json
 from playwright.async_api import async_playwright
 
 def get_domain(url):
-    return urllib.parse.urlparse(url).netloc
+    domain = urllib.parse.urlparse(url).netloc
+    if domain.startswith("www."):
+        return domain[4:]
+    return domain
 
 def get_path(url):
     parsed = urllib.parse.urlparse(url)
@@ -19,7 +27,6 @@ def get_path(url):
 def normalize_url(base_url, link_href):
     return urllib.parse.urljoin(base_url, link_href)
 
-import json
 
 class FlazioInterceptor:
     def __init__(self):
@@ -381,7 +388,13 @@ def analyze_structure(original_site_data, imported_site_data, original_domain):
         if orig_len > 0:
             diff_ratio = (imp_len / orig_len) * 100
             if diff_ratio < 60:
-                errors.append(f"| Pagina {path} | <span style='color: #fd7e14; font-weight: bold;'>🟠 Testo Mancante</span> | Media | Il sito importato ha molto meno testo ({imp_len} char) rispetto all'originale ({orig_len} char). Controlla se mancano sezioni. |")
+                ai_text_feedback = ""
+                # Chiamata AI se il testo differisce pesantemente
+                ai_feedback = ai_analyzer.analyze_content_diff(orig_data['text'], imp_data['text'], path)
+                if ai_feedback and not ai_feedback.startswith("⚠️"):
+                    ai_text_feedback = f"<br><br>🤖 **AI Feedback:** {ai_feedback}"
+                
+                errors.append(f"| Pagina {path} | <span style='color: #fd7e14; font-weight: bold;'>🟠 Testo Mancante</span> | Media | Il sito importato ha molto meno testo ({imp_len} char) rispetto all'originale ({orig_len} char). Controlla se mancano sezioni.{ai_text_feedback} |")
                 
         # Check Video
         orig_vid = orig_data.get('videos', 0)
@@ -437,7 +450,16 @@ def analyze_structure(original_site_data, imported_site_data, original_domain):
         
         if diff_percent > 15.0:
             diff_abs_path = os.path.abspath(diff_img_path)
-            errors.append(f"| Pagina {path} | <span style='color: #6f42c1; font-weight: bold;'>🟣 Visual Regression</span> | Media | Trovata forte deviazione grafica ({diff_percent:.1f}% di pixel diversi). [Vedi Diff]({diff_abs_path}) |")
+            
+            # Richiedi analisi visiva all'AI se la diff è superiore al 15%
+            print(f"    - [AI] Analisi visiva in corso per {path} ({diff_percent:.1f}% diff)...")
+            ai_vision_feedback = ai_analyzer.analyze_visual_regression(orig_img_path, imp_img_path, diff_percent)
+            
+            ai_html = ""
+            if ai_vision_feedback and not ai_vision_feedback.startswith("⚠️"):
+                ai_html = f"<br><br>🤖 **AI Vision Feedback:**<br>{ai_vision_feedback}"
+            
+            errors.append(f"| Pagina {path} | <span style='color: #6f42c1; font-weight: bold;'>🟣 Visual Regression</span> | Media | Trovata forte deviazione grafica ({diff_percent:.1f}% di pixel diversi). [Vedi Diff]({diff_abs_path}){ai_html} |")
 
         # (Rimosso il controllo sul numero dei link perché Flazio usa <li> con Javascript invece di <a>,
         # generando falsi positivi nel confronto matematico)
@@ -484,6 +506,14 @@ def generate_report(link_errors, structure_errors):
     if total_errors == 0:
         report += "| N/A | Nessun Errore | N/A | Non sono state trovate discrepanze strutturali o link rotti! |\n"
         
+    print("[*] Sintesi AI del report in corso...")
+    # Raccogliamo solo gli errori testuali per non superare il limite di token dell'AI
+    raw_errors = "\n".join(link_errors + structure_errors)
+    ai_summary = ai_analyzer.generate_executive_summary(raw_errors)
+    
+    if ai_summary and not ai_summary.startswith("⚠️"):
+        report += f"\n## 🤖 Executive Summary (Generato con AI)\n{ai_summary}\n"
+        
     report += """
 ## Azioni Correttive Prioritarie
 - Risolvere tutti gli "Errori Link (Cross-Domain)" per evitare che gli utenti finiscano sul vecchio sito cliccando sui menu.
@@ -493,7 +523,9 @@ def generate_report(link_errors, structure_errors):
     return report
 
 async def main():
-    parser = argparse.ArgumentParser(description="Web QA Automation Script for Flazio Migrations (Deterministic Mode)")
+    load_dotenv() # Carica le variabili da .env
+    
+    parser = argparse.ArgumentParser(description="Web QA Automation Script for Flazio Migrations (AI Powered)")
     parser.add_argument("--original", required=False, help="URL della Home del sito originale")
     parser.add_argument("--imported", required=False, help="URL della Home del sito importato su Flazio")
     parser.add_argument("--max-pages", type=int, default=50, help="Numero massimo di pagine da scansionare (default: 50)")
