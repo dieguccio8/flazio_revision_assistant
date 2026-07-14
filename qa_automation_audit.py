@@ -104,6 +104,7 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False):
             
             # Extract links
             links = []
+            link_contexts = {}
             for a_tag in soup.find_all("a", href=True):
                 href = a_tag["href"]
                 
@@ -159,18 +160,18 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False):
                     # Estrazione link dai bottoni, menu e immagini
                     d_links = []
                     for btn in comp.get("buttons", []):
-                        if btn.get("d"): d_links.append(btn.get("d"))
+                        if btn.get("d"): d_links.append((btn.get("d"), "Pulsante '" + str(btn.get("n", "Sconosciuto")) + "'"))
                         
                     indfile = comp.get("indfile", {})
                     if isinstance(indfile, dict) and isinstance(indfile.get("attr"), dict):
-                        if indfile["attr"].get("d"): d_links.append(indfile["attr"]["d"])
+                        if indfile["attr"].get("d"): d_links.append((indfile["attr"]["d"], "Immagine/File"))
                         
                     param = comp.get("param", {})
                     if isinstance(param, dict) and "voci" in param:
                         for voce in param["voci"]:
-                            if voce.get("d"): d_links.append(voce.get("d"))
+                            if voce.get("d"): d_links.append((voce.get("d"), "Menu '" + str(voce.get("n", "Voce")) + "'"))
                             
-                    for d in d_links:
+                    for d, ctx in d_links:
                         if d.startswith("http"):
                             fl = d
                         elif d.startswith("popup:") or d.startswith("mailto:") or d.startswith("tel:"):
@@ -181,9 +182,13 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False):
                             
                         if fl not in links:
                             links.append(fl)
-                            if get_domain(fl) == domain and fl not in visited and fl not in queue:
-                                if not fl.lower().endswith(('.pdf', '.jpg', '.png', '.zip', '.mp4')):
-                                    queue.append(fl)
+                            link_contexts[fl] = ctx
+                        else:
+                            link_contexts[fl] = ctx
+                            
+                        if get_domain(fl) == domain and fl not in visited and fl not in queue:
+                            if not fl.lower().endswith(('.pdf', '.jpg', '.png', '.zip', '.mp4')):
+                                queue.append(fl)
                     
                     if "componenti" in comp:
                         for child in comp["componenti"]:
@@ -195,7 +200,16 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False):
                         
             else:
                 # Estrazione HTML classica
-                videos = len(soup.find_all(['iframe', 'video', 'embed']))
+                videos = 0
+                for tag in soup.find_all(['iframe', 'video', 'embed']):
+                    if tag.name == 'video':
+                        videos += 1
+                        continue
+                    src = tag.get('src', '').lower()
+                    # Filtra iframe usati per tracking, chat (Wix), mappe, o captcha
+                    if not src or any(x in src for x in ['wixapps', 'visitor-analytics', 'chat', 'maps', 'recaptcha', 'cookie', 'analytics']):
+                        continue
+                    videos += 1
                 for element in soup(["script", "style", "noscript", "meta", "link", "head"]):
                     element.extract()
                 text_content = soup.get_text(separator=' ', strip=True)
@@ -208,6 +222,7 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False):
                 "url": current_url,
                 "html": html_content,
                 "links": links,
+                "link_contexts": link_contexts,
                 "videos": videos,
                 "text": text_content,
                 "title": soup.title.string if soup.title else "Nessun Titolo"
@@ -231,7 +246,9 @@ def analyze_links(original_domain, imported_site_data):
             link_domain = get_domain(link)
             # Se un link nel sito IMPORTATO punta al dominio ORIGINALE, è un errore grave (utente esce dal nuovo sito)
             if link_domain == original_domain:
-                errors.append(f"| Pagina {path} | Errore Link (Cross-Domain) | Alta | Il link `{link}` punta ancora al vecchio dominio originale. Da correggere. |")
+                ctx = data.get("link_contexts", {}).get(link, "")
+                ctx_str = f" in **{ctx}**" if ctx else ""
+                errors.append(f"| Pagina {path} | Errore Link (Cross-Domain) | Alta | Il link `{link}`{ctx_str} punta ancora al vecchio dominio originale. Da correggere. |")
     return errors
 
 def analyze_structure(original_site_data, imported_site_data):
