@@ -568,7 +568,6 @@ async def main():
             
         if choice == 'n':
             print("Chiusura dello script in corso... Arrivederci!")
-            import os
             # Su Mac, questo chiude fisicamente la finestra del terminale attiva
             os.system("osascript -e 'tell application \"Terminal\" to close front window' & exit")
             break
