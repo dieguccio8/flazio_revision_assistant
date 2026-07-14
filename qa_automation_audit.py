@@ -1,8 +1,13 @@
 import warnings
 warnings.filterwarnings("ignore")
 
-import visual_analyzer
 import os
+# Sopprime i log informativi fastidiosi di gRPC (ev_poll_posix.cc ecc.)
+os.environ["GRPC_VERBOSITY"] = "ERROR"
+os.environ["GLOG_minloglevel"] = "2"
+os.environ["GRPC_ENABLE_FORK_SUPPORT"] = "1"
+
+import visual_analyzer
 import argparse
 import asyncio
 import ai_analyzer
@@ -539,14 +544,14 @@ def generate_report(link_errors, structure_errors):
     raw_errors_lines = []
     for e in all_errors:
         raw_errors_lines.append(f"{e['path']}: {e['type']} - {e['detail']} {e['ai_feedback']}")
-    raw_errors = "\\n".join(raw_errors_lines)
+    raw_errors = "\n".join(raw_errors_lines)
     ai_summary = ai_analyzer.generate_executive_summary(raw_errors)
     
     if ai_summary and not ai_summary.startswith("⚠️"):
-        report += f"## 🤖 Executive Summary (Generato con AI)\\n{ai_summary}\\n\\n---\\n\\n"
+        report += f"## 🤖 Executive Summary (Generato con AI)\n{ai_summary}\n\n---\n\n"
         
     if total_errors == 0:
-        report += "✅ **Nessun Errore Trovato!** Non sono state trovate discrepanze strutturali o link rotti.\\n"
+        report += "✅ **Nessun Errore Trovato!** Non sono state trovate discrepanze strutturali o link rotti.\n"
     else:
         # Raggruppiamo gli errori per path
         from collections import defaultdict
@@ -555,15 +560,15 @@ def generate_report(link_errors, structure_errors):
             grouped_errors[error['path']].append(error)
             
         for path, page_errors in grouped_errors.items():
-            report += f"## 📄 Pagina: `{path}`\\n\\n"
+            report += f"## 📄 Pagina: `{path}`\n\n"
             for e in page_errors:
-                report += f"- {e['icon']} **{e['type']}** *(Gravità: {e['severity']})*\\n"
-                report += f"  - **Dettaglio:** {e['detail']}\\n"
+                report += f"- {e['icon']} **{e['type']}** *(Gravità: {e['severity']})*\n"
+                report += f"  - **Dettaglio:** {e['detail']}\n"
                 if e['ai_feedback']:
                     # Indenta il feedback AI in modo che stia bene nel markdown
-                    ai_fb = e['ai_feedback'].replace("\\n", "\\n    ")
-                    report += f"  - 🤖 **AI Feedback:** {ai_fb}\\n"
-            report += "\\n---\\n\\n"
+                    ai_fb = e['ai_feedback'].replace("\n", "\n    ")
+                    report += f"  - 🤖 **AI Feedback:** {ai_fb}\n"
+            report += "\n---\n\n"
         
     report += """
 ## Azioni Correttive Prioritarie

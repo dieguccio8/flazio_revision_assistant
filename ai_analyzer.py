@@ -8,12 +8,32 @@ def init_genai():
     genai.configure(api_key=api_key)
     return True
 
+import time
+
+def call_gemini_with_retry(model, *args, **kwargs):
+    max_retries = 3
+    base_delay = 15
+    for attempt in range(max_retries):
+        try:
+            return model.generate_content(*args, **kwargs)
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str or "Quota exceeded" in err_str:
+                if attempt < max_retries - 1:
+                    print(f"    - [AI] Quota API superata (Rate Limit). Attendo {base_delay} secondi prima di riprovare (tentativo {attempt+1}/{max_retries})...")
+                    time.sleep(base_delay)
+                    base_delay *= 2  # Exponential backoff
+                else:
+                    raise e
+            else:
+                raise e
+
 def analyze_visual_regression(orig_img_path, imp_img_path, diff_percent):
     if not init_genai():
         return "⚠️ Errore: API Key di Gemini non configurata. Salto analisi visiva."
 
     try:
-        model = genai.GenerativeModel('gemini-1.5-pro')
+        model = genai.GenerativeModel('gemini-3.5-flash')
         
         # Carica le immagini
         import PIL.Image
@@ -30,7 +50,7 @@ Uno script matematico ha già rilevato una differenza visiva del {diff_percent:.
 Analizza attentamente entrambe le immagini e spiegami A PAROLE cosa è cambiato visivamente (es. elementi disallineati, colori sbagliati, font diversi, sezioni mancanti o tagliate, navbar diversa).
 Sii conciso e diretto, elencando i problemi principali con dei bullet point. Evita introduzioni lunghe.
 """
-        response = model.generate_content([prompt, orig_img, imp_img])
+        response = call_gemini_with_retry(model, [prompt, orig_img, imp_img])
         return response.text.strip()
     except Exception as e:
         err_str = str(e).split("metadata {")[0].strip()
@@ -44,7 +64,7 @@ def analyze_content_diff(orig_text, imp_text, path):
         return "Nessun testo originale presente per questa pagina."
 
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-3.5-flash')
         
         prompt = f"""
 Sei un revisore di siti web. Sto migrando la pagina "{path}".
@@ -62,7 +82,7 @@ Uno script ha rilevato che gran parte del testo è andata persa o è molto diver
 Dimmi QUALI INFORMAZIONI IMPORTANTI (es. prezzi, indirizzi, descrizioni servizi, contatti) sono andate perse o differiscono significativamente.
 Sii molto breve (max 2-3 frasi) e vai dritto al punto.
 """
-        response = model.generate_content(prompt)
+        response = call_gemini_with_retry(model, prompt)
         return response.text.strip()
     except Exception as e:
         err_str = str(e).split("metadata {")[0].strip()
@@ -73,7 +93,7 @@ def generate_executive_summary(errors_text):
         return "⚠️ *Errore: API Key di Gemini non configurata. Sintesi AI disabilitata.*"
 
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-3.5-flash')
         
         prompt = f"""
 Sei un QA Lead. Ho eseguito un audit automatico su un sito migrato e ho trovato i seguenti errori (strutturali, link rotti e visivi):
@@ -82,7 +102,7 @@ Sei un QA Lead. Ho eseguito un audit automatico su un sito migrato e ho trovato 
 Scrivi un "Executive Summary" di massimo 5-6 righe in cui riassumi la situazione generale del sito. 
 Indica se la migrazione è andata bene, male o ha problemi critici, e consiglia le prime 3 azioni prioritarie da compiere (es. "Correggere subito i link rotti nel menu", "Ripristinare i testi mancanti in homepage"). Usa il grassetto per evidenziare i concetti chiave. Usa un tono professionale ma diretto.
 """
-        response = model.generate_content(prompt)
+        response = call_gemini_with_retry(model, prompt)
         return response.text.strip()
     except Exception as e:
         err_str = str(e).split("metadata {")[0].strip()
