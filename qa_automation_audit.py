@@ -1,3 +1,5 @@
+import visual_analyzer
+import os
 import argparse
 import asyncio
 import os
@@ -53,6 +55,12 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False):
     
     print(f"[*] Inizio discovery e crawling del dominio: {domain}")
     
+    # Crea cartelle screenshot
+    import os
+    safe_domain = domain.replace("www.", "")
+    screenshot_dir = os.path.join("results", safe_domain, "screenshots", "flazio" if is_flazio else "original")
+    os.makedirs(screenshot_dir, exist_ok=True)
+    
     # 1. TENTATIVO LETTURA SITEMAP
     sitemap_url = urllib.parse.urljoin(start_url, "/sitemap.xml")
     try:
@@ -100,6 +108,36 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False):
                 await page.wait_for_timeout(3000)
             
             html_content = await page.content()
+            
+            # --- Graphical Analysis ---
+            # 1. Screenshot
+            safe_path = path.replace("/", "_")
+            if not safe_path or safe_path == "_": safe_path = "_home"
+            await page.screenshot(path=os.path.join(screenshot_dir, f"{safe_path}.png"), full_page=True)
+            
+            # 2. Design System
+            design_system = {}
+            try:
+                design_system = await page.evaluate('''() => {
+                    let fonts = new Set();
+                    let colors = new Set();
+                    let bgColors = new Set();
+                    document.querySelectorAll('h1, h2, h3, p, button, a').forEach(el => {
+                        let style = window.getComputedStyle(el);
+                        if (style.fontFamily) fonts.add(style.fontFamily);
+                        if (style.color && style.color !== 'rgba(0, 0, 0, 0)') colors.add(style.color);
+                        if (style.backgroundColor && style.backgroundColor !== 'rgba(0, 0, 0, 0)') bgColors.add(style.backgroundColor);
+                    });
+                    return {
+                        fonts: Array.from(fonts),
+                        colors: Array.from(colors),
+                        bgColors: Array.from(bgColors)
+                    };
+                }''')
+            except Exception:
+                pass
+            # --------------------------
+            
             soup = BeautifulSoup(html_content, "html.parser")
             
             # Extract links
@@ -132,12 +170,21 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False):
                 # Estrazione NATIVA dal JSON di Flazio intercettato
                 videos = 0
                 text_content = ""
+                images_ratios = []
                 
                 def parse_component(comp):
-                    nonlocal videos, text_content, links
+                    nonlocal videos, text_content, links, images_ratios, link_contexts
                     t = comp.get("t", "")
                     if t in ["video", "youtube", "vimeo"]:
                         videos += 1
+                    elif t in ["immagine", "galleria", "slider"]:
+                        try:
+                            w = float(comp.get("w", 0))
+                            h = float(comp.get("h", 0))
+                            if w > 10 and h > 10:
+                                images_ratios.append(round(w / h, 2))
+                        except (ValueError, TypeError):
+                            pass
                     elif t == "testo":
                         # Flazio salva il testo in c_testo come HTML
                         html_text = comp.get("c_testo", "")
@@ -151,11 +198,24 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False):
                                 href = a_tag["href"]
                                 if not href.startswith(("mailto:", "tel:", "javascript:")):
                                     fl = normalize_url(current_url, href)
+                                    
+                                    # Create context from the text inside the link, or the surrounding text
+                                    link_text = a_tag.get_text(strip=True)
+                                    if not link_text:
+                                        link_text = clean_text[:30] + "..."
+                                    ctx = f"Testo: '{link_text}'"
+                                    
                                     if fl not in links:
                                         links.append(fl)
-                                        if get_domain(fl) == domain and fl not in visited and fl not in queue:
-                                            if not fl.lower().endswith(('.pdf', '.jpg', '.png', '.zip', '.mp4')):
-                                                queue.append(fl)
+                                        link_contexts[fl] = ctx
+                                    else:
+                                        # If it's already there, we only override if it doesn't have a better context
+                                        if fl not in link_contexts or link_contexts[fl] == "":
+                                            link_contexts[fl] = ctx
+                                        
+                                    if get_domain(fl) == domain and fl not in visited and fl not in queue:
+                                        if not fl.lower().endswith(('.pdf', '.jpg', '.png', '.zip', '.mp4')):
+                                            queue.append(fl)
                     
                     # Estrazione link dai bottoni, menu e immagini
                     d_links = []
@@ -210,6 +270,20 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False):
                     if not src or any(x in src for x in ['wixapps', 'visitor-analytics', 'chat', 'maps', 'recaptcha', 'cookie', 'analytics']):
                         continue
                     videos += 1
+                
+                images_ratios = []
+                try:
+                    js_ratios = await page.evaluate('''() => {
+                        return Array.from(document.querySelectorAll('img')).map(img => {
+                            let w = img.width || img.clientWidth || img.naturalWidth;
+                            let h = img.height || img.clientHeight || img.naturalHeight;
+                            return (w > 10 && h > 10) ? Number((w / h).toFixed(2)) : 0;
+                        }).filter(r => r > 0);
+                    }''')
+                    images_ratios = js_ratios
+                except Exception:
+                    pass
+                
                 for element in soup(["script", "style", "noscript", "meta", "link", "head"]):
                     element.extract()
                 text_content = soup.get_text(separator=' ', strip=True)
@@ -224,6 +298,8 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False):
                 "links": links,
                 "link_contexts": link_contexts,
                 "videos": videos,
+                "images_ratios": images_ratios,
+                "design_system": design_system,
                 "text": text_content,
                 "title": soup.title.string if soup.title else "Nessun Titolo"
             }
@@ -251,7 +327,7 @@ def analyze_links(original_domain, imported_site_data):
                 errors.append(f"| Pagina {path} | Errore Link (Cross-Domain) | Alta | Il link `{link}`{ctx_str} punta ancora al vecchio dominio originale. Da correggere. |")
     return errors
 
-def analyze_structure(original_site_data, imported_site_data):
+def analyze_structure(original_site_data, imported_site_data, original_domain):
     errors = []
     
     for path, orig_data in original_site_data.items():
@@ -275,6 +351,53 @@ def analyze_structure(original_site_data, imported_site_data):
         imp_vid = imp_data.get('videos', 0)
         if orig_vid > imp_vid:
             errors.append(f"| Pagina {path} | Video Mancanti | Alta | Trovati solo {imp_vid} video/iframe rispetto ai {orig_vid} dell'originale. |")
+
+        
+        # Check Design System
+        orig_ds = orig_data.get('design_system', {})
+        imp_ds = imp_data.get('design_system', {})
+        
+        if orig_ds and imp_ds:
+            orig_fonts = set([f.split(',')[0].strip().strip('\'"') for f in orig_ds.get('fonts', [])])
+            imp_fonts = set([f.split(',')[0].strip().strip('\'"') for f in imp_ds.get('fonts', [])])
+            
+            # Se la pagina originale aveva dei font primari che non sono presenti su Flazio
+            missing_fonts = orig_fonts - imp_fonts
+            # Flazio potrebbe usare nomi simili o web-safe, ma se non c'è match esatto avvisiamo
+            if len(missing_fonts) > 0 and len(imp_fonts) > 0:
+                # Controlliamo solo se differiscono *completamente* (nessun font in comune)
+                if len(orig_fonts.intersection(imp_fonts)) == 0:
+                    errors.append(f"| Pagina {path} | Design System (Font) | Bassa | I font sembrano essere cambiati. Originale usava: `{', '.join(orig_fonts)}`, Flazio usa: `{', '.join(imp_fonts)}`. |")
+
+        # Check immagini (Aspect Ratio)
+        orig_ratios = orig_data.get('images_ratios', [])
+        imp_ratios = imp_data.get('images_ratios', [])
+        
+        if orig_ratios and imp_ratios:
+            # Conta quanti aspect ratio originali non trovano una corrispondenza tollerabile (±0.15) nel sito importato
+            distorted = 0
+            for o_r in orig_ratios:
+                if not any(abs(o_r - i_r) < 0.15 for i_r in imp_ratios):
+                    distorted += 1
+            
+            # Se più del 30% delle immagini ha un aspect ratio non trovato, segnala possibile crop
+            if distorted > 0 and (distorted / len(orig_ratios)) > 0.3:
+                errors.append(f"| Pagina {path} | Immagini Distorte/Tagliate | Media | Rilevate {distorted} immagini con proporzioni originali (Aspect Ratio) perse nel nuovo sito. Controlla ritagli o deformazioni. |")
+
+        # --- VISUAL REGRESSION ---
+        safe_domain = original_domain.replace("www.", "")
+        safe_path = path.replace("/", "_")
+        if not safe_path or safe_path == "_": safe_path = "_home"
+        
+        orig_img_path = os.path.join("results", safe_domain, "screenshots", "original", f"{safe_path}.png")
+        imp_img_path = os.path.join("results", safe_domain, "screenshots", "flazio", f"{safe_path}.png")
+        diff_img_path = os.path.join("results", safe_domain, "screenshots", f"{safe_path}_diff.png")
+        
+        diff_percent = visual_analyzer.compare_screenshots(orig_img_path, imp_img_path, diff_img_path)
+        
+        if diff_percent > 15.0:
+            diff_abs_path = os.path.abspath(diff_img_path)
+            errors.append(f"| Pagina {path} | Visual Regression | Media | Trovata forte deviazione grafica ({diff_percent:.1f}% di pixel diversi). [Vedi Diff]({diff_abs_path}) |")
 
         # (Rimosso il controllo sul numero dei link perché Flazio usa <li> con Javascript invece di <a>,
         # generando falsi positivi nel confronto matematico)
@@ -320,59 +443,80 @@ async def main():
     parser.add_argument("--max-pages", type=int, default=50, help="Numero massimo di pagine da scansionare (default: 50)")
     args = parser.parse_args()
 
-    original_url = args.original
-    if not original_url:
-        print("-" * 60)
-        original_url = input("🔗 Inserisci l'URL del Sito Originale (es. https://www.vecchiosito.it): ").strip()
-        
-    imported_url = args.imported
-    if not imported_url:
-        imported_url = input("🔗 Inserisci l'URL del Sito Importato su Flazio (es. https://nuovo.flazio.com): ").strip()
-        print("-" * 60)
+    while True:
+        original_url = args.original
+        if not original_url:
+            print("-" * 60)
+            original_url = input("🔗 Inserisci l'URL del Sito Originale (es. https://www.vecchiosito.it): ").strip()
+            
+        imported_url = args.imported
+        if not imported_url:
+            imported_url = input("🔗 Inserisci l'URL del Sito Importato su Flazio (es. https://nuovo.flazio.com): ").strip()
+            print("-" * 60)
 
-    if not original_url or not imported_url:
-        print("[!] Errore: Entrambi i link sono obbligatori per avviare il confronto.")
-        return
+        if not original_url or not imported_url:
+            print("[!] Errore: Entrambi i link sono obbligatori per avviare il confronto.")
+            # Clear args for the next iteration if we continue
+            args.original = None
+            args.imported = None
+            continue
 
-    print(f"\n[*] Inizio analisi comparativa STRUTTURALE (Senza AI)...")
-    print(f"[*] Originale: {original_url}")
-    print(f"[*] Importato: {imported_url}\n")
-    
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context() # Niente viewport fisso, non scattiamo foto
-        page = await context.new_page()
+        print(f"\n[*] Inizio analisi comparativa STRUTTURALE (Senza AI)...")
+        print(f"[*] Originale: {original_url}")
+        print(f"[*] Importato: {imported_url}\n")
         
-        original_site_data = await crawl_site(page, original_url, max_pages=args.max_pages)
-        imported_site_data = await crawl_site(page, imported_url, max_pages=args.max_pages, is_flazio=True)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context() # Niente viewport fisso, non scattiamo foto
+            page = await context.new_page()
+            
+            original_site_data = await crawl_site(page, original_url, max_pages=args.max_pages)
+            imported_site_data = await crawl_site(page, imported_url, max_pages=args.max_pages, is_flazio=True)
+            
+            await browser.close()
+            
+        original_domain = get_domain(original_url)
         
-        await browser.close()
+        print("[*] Ricerca link rotti e riferimenti al vecchio dominio...")
+        link_errors = analyze_links(original_domain, imported_site_data)
         
-    original_domain = get_domain(original_url)
-    
-    print("[*] Ricerca link rotti e riferimenti al vecchio dominio...")
-    link_errors = analyze_links(original_domain, imported_site_data)
-    
-    print("[*] Analisi strutturale e confronto contenuti in corso...")
-    structure_errors = analyze_structure(original_site_data, imported_site_data)
-    
-    print("[*] Generazione del report in corso...")
-    report = generate_report(link_errors, structure_errors)
-    
-    # Usa il percorso assoluto della cartella dello script
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    # Creazione della cartella results/<sito_originale>
-    safe_domain_name = original_domain.replace("www.", "")
-    output_dir = os.path.join(script_dir, "results", safe_domain_name)
-    os.makedirs(output_dir, exist_ok=True)
-    
-    report_path = os.path.join(output_dir, "report_audit.md")
-    
-    with open(report_path, "w", encoding="utf-8") as f:
-        f.write(report)
+        print("[*] Analisi strutturale e confronto contenuti in corso...")
+        structure_errors = analyze_structure(original_site_data, imported_site_data, original_domain)
         
-    print(f"[+] Analisi completata! Il report è stato salvato in: {report_path}")
+        print("[*] Generazione del report in corso...")
+        report = generate_report(link_errors, structure_errors)
+        
+        # Usa il percorso assoluto della cartella dello script
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # Creazione della cartella results/<sito_originale>
+        safe_domain_name = original_domain.replace("www.", "")
+        output_dir = os.path.join(script_dir, "results", safe_domain_name)
+        os.makedirs(output_dir, exist_ok=True)
+        
+        report_path = os.path.join(output_dir, "report_audit.md")
+        
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write(report)
+            
+        print(f"[+] Analisi completata! Il report è stato salvato in: {report_path}")
+        
+        # Chiedi all'utente se vuole continuare
+        print("-" * 60)
+        while True:
+            choice = input("Vuoi avviare la revisione di un altro sito? (y/n): ").strip().lower()
+            if choice in ['y', 'n']:
+                break
+            print("Scelta non valida. Inserisci 'y' per sì o 'n' per no.")
+            
+        if choice == 'n':
+            print("Chiusura dello script in corso... Arrivederci!")
+            break
+        else:
+            # Resetta i parametri originali per richiedere l'input al prossimo giro
+            args.original = None
+            args.imported = None
+            print("\n" * 2)
 
 if __name__ == "__main__":
     asyncio.run(main())
