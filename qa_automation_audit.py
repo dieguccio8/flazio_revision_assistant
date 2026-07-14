@@ -93,8 +93,8 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False):
             await page.goto(current_url, wait_until="load", timeout=30000)
             
             if is_flazio:
-                # Flazio usa XHR per caricare i JSON dei componenti, aspettiamo che le richieste finiscano
-                await page.wait_for_load_state("networkidle")
+                # Diamo tempo alle chiamate JSON di completarsi (2 secondi bastano, networkidle spesso si blocca su SPA)
+                await page.wait_for_timeout(2000)
             else:
                 # Per il sito classico aspettiamo il rendering
                 await page.wait_for_timeout(3000)
@@ -133,7 +133,7 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False):
                 text_content = ""
                 
                 def parse_component(comp):
-                    nonlocal videos, text_content
+                    nonlocal videos, text_content, links
                     t = comp.get("t", "")
                     if t in ["video", "youtube", "vimeo"]:
                         videos += 1
@@ -141,8 +141,49 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False):
                         # Flazio salva il testo in c_testo come HTML
                         html_text = comp.get("c_testo", "")
                         if html_text:
-                            clean_text = BeautifulSoup(html_text, "html.parser").get_text(separator=' ', strip=True)
+                            inner_soup = BeautifulSoup(html_text, "html.parser")
+                            clean_text = inner_soup.get_text(separator=' ', strip=True)
                             text_content += clean_text + " "
+                            
+                            # Estrazione link dal testo
+                            for a_tag in inner_soup.find_all("a", href=True):
+                                href = a_tag["href"]
+                                if not href.startswith(("mailto:", "tel:", "javascript:")):
+                                    fl = normalize_url(current_url, href)
+                                    if fl not in links:
+                                        links.append(fl)
+                                        if get_domain(fl) == domain and fl not in visited and fl not in queue:
+                                            if not fl.lower().endswith(('.pdf', '.jpg', '.png', '.zip', '.mp4')):
+                                                queue.append(fl)
+                    
+                    # Estrazione link dai bottoni, menu e immagini
+                    d_links = []
+                    for btn in comp.get("buttons", []):
+                        if btn.get("d"): d_links.append(btn.get("d"))
+                        
+                    indfile = comp.get("indfile", {})
+                    if isinstance(indfile, dict) and isinstance(indfile.get("attr"), dict):
+                        if indfile["attr"].get("d"): d_links.append(indfile["attr"]["d"])
+                        
+                    param = comp.get("param", {})
+                    if isinstance(param, dict) and "voci" in param:
+                        for voce in param["voci"]:
+                            if voce.get("d"): d_links.append(voce.get("d"))
+                            
+                    for d in d_links:
+                        if d.startswith("http"):
+                            fl = d
+                        elif d.startswith("popup:") or d.startswith("mailto:") or d.startswith("tel:"):
+                            continue
+                        else:
+                            page_path = d.split("$")[0]
+                            fl = urllib.parse.urljoin(current_url, f"/{page_path}")
+                            
+                        if fl not in links:
+                            links.append(fl)
+                            if get_domain(fl) == domain and fl not in visited and fl not in queue:
+                                if not fl.lower().endswith(('.pdf', '.jpg', '.png', '.zip', '.mp4')):
+                                    queue.append(fl)
                     
                     if "componenti" in comp:
                         for child in comp["componenti"]:
