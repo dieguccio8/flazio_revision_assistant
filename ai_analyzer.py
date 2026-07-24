@@ -10,9 +10,21 @@ def init_genai():
         return None
     return genai.Client(api_key=api_key)
 
+def get_response_text(response):
+    """Estrae il testo in modo sicuro ignorando le parti non testuali (es. thought_signature) per evitare warning."""
+    if not response or not getattr(response, 'candidates', None) or not response.candidates:
+        return ""
+    
+    text_parts = []
+    for part in response.candidates[0].content.parts:
+        if getattr(part, 'text', None):
+            text_parts.append(part.text)
+            
+    return "".join(text_parts).strip()
+
 def call_gemini_with_retry(client, model_name, contents):
-    max_retries = 6
-    base_delay = 25
+    max_retries = 3
+    delay = 60 # Un'attesa fissa di 60s è ottimale per i limiti "per minute" (RPM)
     for attempt in range(max_retries):
         try:
             return client.models.generate_content(
@@ -23,9 +35,9 @@ def call_gemini_with_retry(client, model_name, contents):
             err_str = str(e)
             if "429" in err_str or "Quota" in err_str or "403" in err_str:
                 if attempt < max_retries - 1:
-                    print(f"    - [AI] Quota API superata (Rate Limit). Attendo {base_delay} secondi prima di riprovare (tentativo {attempt+1}/{max_retries})...")
-                    time.sleep(base_delay)
-                    base_delay *= 2  # Exponential backoff
+                    print(f"    - [AI] Quota API superata (Rate Limit). Attendo {delay} secondi prima di riprovare (tentativo {attempt+1}/{max_retries})...")
+                    print(f"      [Dettaglio]: {err_str.split('metadata')[0].strip()}")
+                    time.sleep(delay)
                 else:
                     raise e
             else:
@@ -51,7 +63,7 @@ Sii conciso e diretto, elencando i problemi principali con dei bullet point. Evi
 """
     try:
         response = call_gemini_with_retry(client, 'gemini-3.5-flash', [prompt, orig_img, imp_img])
-        return response.text.strip()
+        return get_response_text(response)
     except Exception as e:
         err_str = str(e).split("metadata {")[0].strip()
         return f"Errore durante l'analisi visiva AI: {err_str}"
@@ -82,7 +94,7 @@ Sii molto breve (max 2-3 frasi) e vai dritto al punto.
 """
     try:
         response = call_gemini_with_retry(client, 'gemini-3.5-flash', prompt)
-        return response.text.strip()
+        return get_response_text(response)
     except Exception as e:
         err_str = str(e).split("metadata {")[0].strip()
         return f"Errore durante l'analisi testuale AI: {err_str}"
@@ -101,7 +113,7 @@ Indica se la migrazione è andata bene, male o ha problemi critici, e consiglia 
 """
     try:
         response = call_gemini_with_retry(client, 'gemini-3.5-flash', prompt)
-        return response.text.strip()
+        return get_response_text(response)
     except Exception as e:
         err_str = str(e).split("metadata {")[0].strip()
         return f"Errore durante la sintesi AI: {err_str}"
