@@ -26,9 +26,15 @@ def get_domain(url):
         return domain[4:]
     return domain
 
-def get_path(url):
+def get_path(url, base_url=None):
     parsed = urllib.parse.urlparse(url)
-    return parsed.path if parsed.path else "/"
+    p = parsed.path if parsed.path else "/"
+    if base_url:
+        b_path = urllib.parse.urlparse(base_url).path.rstrip('/')
+        if b_path and p.startswith(b_path):
+            p = p[len(b_path):]
+            if not p: p = "/"
+    return p
 
 def normalize_url(base_url, link_href):
     return urllib.parse.urljoin(base_url, link_href)
@@ -114,7 +120,7 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False, original_do
         visited.add(current_url)
         print(f"    - Scraping pagina: {current_url}")
         
-        path = get_path(current_url)
+        path = get_path(current_url, start_url)
         interceptor.current_page = path
         
         try:
@@ -265,7 +271,19 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False, original_do
                     d_links = []
                     for btn in comp.get("buttons", []):
                         d_val = str(btn.get("d", "")).strip()
-                        btn_name = str(btn.get("n", "Sconosciuto"))
+                        btn_name = str(btn.get("n", "")).strip()
+                        if not btn_name or btn_name.lower() == "undefined":
+                            # Cerca testo alternativo nel componente principale
+                            btn_name = str(comp.get("testo", "")).strip()
+                            if not btn_name:
+                                html_txt = str(comp.get("c_testo", ""))
+                                if html_txt:
+                                    btn_name = BeautifulSoup(html_txt, "html.parser").get_text(strip=True)[:40]
+                            if not btn_name:
+                                c_type = str(comp.get("t", "Sconosciuto"))
+                                c_id = str(comp.get("id", comp.get("c_id", "ignoto")))
+                                btn_name = f"[{c_type.upper()}] (ID componente: {c_id})"
+                        
                         if d_val and d_val != "undefined": 
                             d_links.append((d_val, "Pulsante '" + btn_name + "'"))
                         else:
@@ -442,24 +460,64 @@ def analyze_links(original_domain, imported_site_data):
             
     return errors
 
-def analyze_structure(original_site_data, imported_site_data, original_domain):
+def analyze_structure(original_site_data, imported_site_data, original_url, imported_url):
+    original_domain = get_domain(original_url)
     errors = []
+    def find_matching_page(p, imported_keys):
+        if p in imported_keys:
+            return p
+        
+        # Casi speciali per la home page
+        if p in ('/home', '/index', '/main') and '/' in imported_keys:
+            return '/'
+        if p == '/' and ('/home' in imported_keys or '/index' in imported_keys):
+            return '/home' if '/home' in imported_keys else '/index'
+            
+        orig_slug = p.strip('/').split('/')[-1].lower() if p.strip('/') else ""
+        
+        from difflib import SequenceMatcher
+        best_match = None
+        highest_ratio = 0
+        
+        for imp_path in imported_keys:
+            imp_slug = imp_path.strip('/').split('/')[-1].lower() if imp_path.strip('/') else ""
+            
+            if orig_slug and imp_slug and orig_slug == imp_slug:
+                return imp_path
+                
+            ratio = SequenceMatcher(None, p, imp_path).ratio()
+            if ratio > highest_ratio:
+                highest_ratio = ratio
+                best_match = imp_path
+                
+        if highest_ratio > 0.75:
+            return best_match
+            
+        return None
+
+    imported_keys = list(imported_site_data.keys())
     
     for path, orig_data in original_site_data.items():
-        if path not in imported_site_data:
+        matched_path = find_matching_page(path, imported_keys)
+        
+        if not matched_path:
             errors.append({
                 "path": path,
                 "type": "Pagina Mancante",
                 "severity": "Alta",
                 "icon": "🟠",
-                "detail": "Questa pagina esiste nel sito originale ma NON è stata trovata nell'importato.",
+                "detail": "Questa pagina esiste nel sito originale ma NON è stata trovata nell'importato nemmeno con un URL simile.",
                 "ai_feedback": ""
             })
             continue
             
-        imp_data = imported_site_data[path]
+        imp_data = imported_site_data[matched_path]
         
-        def normalize_path_for_compare(p):
+        def normalize_path_for_compare(p, b_url=None):
+            if b_url:
+                b_path = urllib.parse.urlparse(b_url).path.rstrip('/')
+                if b_path and p.startswith(b_path):
+                    p = p[len(b_path):]
             p = p.lower()
             if p.endswith('.html'): p = p[:-5]
             if p.endswith('.php'): p = p[:-4]
@@ -483,10 +541,10 @@ def analyze_structure(original_site_data, imported_site_data, original_domain):
         orig_internal_links = {}
         for l in orig_data['links']:
             if get_domain(l) == original_domain:
-                p = normalize_path_for_compare(urllib.parse.urlparse(l).path)
+                p = normalize_path_for_compare(urllib.parse.urlparse(l).path, original_url)
                 orig_internal_links[p] = orig_data.get('link_contexts', {}).get(l, "")
 
-        imp_internal_links = {normalize_path_for_compare(urllib.parse.urlparse(l).path) for l in imp_data['links'] if get_domain(l) == get_domain(imp_data['url'])}
+        imp_internal_links = {normalize_path_for_compare(urllib.parse.urlparse(l).path, imported_url) for l in imp_data['links'] if get_domain(l) == get_domain(imp_data['url'])}
         
         from difflib import SequenceMatcher
         missing_paths = set()
@@ -624,7 +682,10 @@ def analyze_structure(original_site_data, imported_site_data, original_domain):
             
             # Richiedi analisi visiva all'AI se la diff è superiore al 15%
             print(f"    - [AI] Analisi visiva in corso per {path} ({diff_percent:.1f}% diff)...")
+            import time
+            _start_t = time.time()
             ai_vision_feedback_raw = ai_analyzer.analyze_visual_regression(orig_img_path, imp_img_path, diff_percent)
+            print(f"      -> Completata in {time.time() - _start_t:.1f} secondi.")
             
             ai_vision_feedback = ""
             if ai_vision_feedback_raw and not ai_vision_feedback_raw.startswith("⚠️"):
@@ -734,7 +795,7 @@ async def main():
             # Impostiamo una risoluzione Desktop Full HD fissa con qualità Retina (scale=2) per screenshot perfetti
             context = await browser.new_context(
                 viewport={'width': 1920, 'height': 1080},
-                device_scale_factor=2
+                device_scale_factor=1
             )
             page = await context.new_page()
             
@@ -747,7 +808,7 @@ async def main():
         link_errors = analyze_links(original_domain, imported_site_data)
         
         print("[*] Analisi strutturale e confronto contenuti in corso...")
-        structure_errors = analyze_structure(original_site_data, imported_site_data, original_domain)
+        structure_errors = analyze_structure(original_site_data, imported_site_data, original_url, imported_url)
         
         print("[*] Generazione del report in corso...")
         report = generate_report(link_errors, structure_errors)

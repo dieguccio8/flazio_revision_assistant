@@ -12,7 +12,15 @@ def image_to_base64(image: PIL.Image.Image) -> str:
     buffered = BytesIO()
     if image.mode != 'RGB':
         image = image.convert('RGB')
-    image.save(buffered, format="JPEG")
+        
+    # Ottimizzazione 1: Riduciamo la risoluzione se è troppo grande per l'AI
+    max_w = 1200
+    if image.width > max_w:
+        ratio = max_w / image.width
+        new_size = (max_w, int(image.height * ratio))
+        image = image.resize(new_size, PIL.Image.Resampling.LANCZOS)
+        
+    image.save(buffered, format="JPEG", quality=80)
     return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
 def call_ollama(prompt, images=None):
@@ -42,7 +50,7 @@ def analyze_visual_regression(orig_img_path, imp_img_path, diff_percent):
     except Exception as e:
         return f"Errore nel caricamento delle immagini per l'analisi AI: {str(e)}"
 
-    CHUNK_HEIGHT = 2160 # Safe height for AI vision preserving small details
+    CHUNK_HEIGHT = 3000 # Increased to reduce chunks, LlaVA can handle taller images since width is downscaled
 
     width1, height1 = orig_img.size
     width2, height2 = imp_img.size
