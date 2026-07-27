@@ -488,9 +488,31 @@ def analyze_structure(original_site_data, imported_site_data, original_domain):
 
         imp_internal_links = {normalize_path_for_compare(urllib.parse.urlparse(l).path) for l in imp_data['links'] if get_domain(l) == get_domain(imp_data['url'])}
         
-        missing_paths = set(orig_internal_links.keys()) - imp_internal_links
+        from difflib import SequenceMatcher
+        missing_paths = set()
+        
+        for opath in orig_internal_links.keys():
+            if opath in imp_internal_links:
+                continue
+            
+            matched = False
+            for ipath in imp_internal_links:
+                # Controlla se uno è sottostringa dell'altro (es. "chi-siamo" vs "chisiamo")
+                if opath and ipath and (opath.replace("-", "").replace("_", "") == ipath.replace("-", "").replace("_", "")):
+                    matched = True
+                    break
+                # Controllo similarità fuzzy (> 80%) per gestire leggeri cambi di URL
+                if SequenceMatcher(None, opath, ipath).ratio() > 0.75:
+                    matched = True
+                    break
+            
+            if not matched:
+                missing_paths.add(opath)
+                
         for missing_path in missing_paths:
             if missing_path == "/" and path == "/": continue
+            if not missing_path: continue
+            
             ctx = orig_internal_links[missing_path]
             ctx_str = f" ({ctx})" if ctx else ""
             errors.append({
