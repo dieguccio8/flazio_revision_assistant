@@ -127,6 +127,25 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False, original_do
             else:
                 # Per il sito classico aspettiamo il rendering
                 await page.wait_for_timeout(3000)
+
+            # Scroll down and up to trigger lazy loading of images and icons before taking screenshot
+            await page.evaluate('''async () => {
+                await new Promise((resolve) => {
+                    let totalHeight = 0;
+                    let distance = 300;
+                    let timer = setInterval(() => {
+                        let scrollHeight = document.body.scrollHeight;
+                        window.scrollBy(0, distance);
+                        totalHeight += distance;
+                        if(totalHeight >= scrollHeight){
+                            clearInterval(timer);
+                            window.scrollTo(0, 0);
+                            resolve();
+                        }
+                    }, 100);
+                });
+            }''')
+            await page.wait_for_timeout(1000)
             
             html_content = await page.content()
             
@@ -181,12 +200,16 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False, original_do
                     full_link = normalize_url(current_url, href)
                     
                 links.append(full_link)
+                link_text = a_tag.get_text(strip=True)[:50]
+                if link_text:
+                    link_contexts[full_link] = f"Link '{link_text}'"
                 
                 # Add to queue se è stesso dominio
                 if get_domain(full_link) == domain and full_link not in visited and full_link not in queue:
                     if not full_link.lower().endswith(('.pdf', '.jpg', '.png', '.zip', '.mp4')):
                         queue.append(full_link)
             
+            unlinked_elements = []
             if is_flazio:
                 # Estrazione NATIVA dal JSON di Flazio intercettato
                 videos = 0
@@ -194,7 +217,7 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False, original_do
                 images_ratios = []
                 
                 def parse_component(comp):
-                    nonlocal videos, text_content, links, images_ratios, link_contexts
+                    nonlocal videos, text_content, links, images_ratios, link_contexts, unlinked_elements
                     t = comp.get("t", "")
                     if t in ["video", "youtube", "vimeo"]:
                         videos += 1
@@ -241,7 +264,12 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False, original_do
                     # Estrazione link dai bottoni, menu e immagini
                     d_links = []
                     for btn in comp.get("buttons", []):
-                        if btn.get("d"): d_links.append((btn.get("d"), "Pulsante '" + str(btn.get("n", "Sconosciuto")) + "'"))
+                        d_val = str(btn.get("d", "")).strip()
+                        btn_name = str(btn.get("n", "Sconosciuto"))
+                        if d_val and d_val != "undefined": 
+                            d_links.append((d_val, "Pulsante '" + btn_name + "'"))
+                        else:
+                            unlinked_elements.append("Pulsante '" + btn_name + "'")
                         
                     indfile = comp.get("indfile", {})
                     if isinstance(indfile, dict) and isinstance(indfile.get("attr"), dict):
@@ -250,7 +278,12 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False, original_do
                     param = comp.get("param", {})
                     if isinstance(param, dict) and "voci" in param:
                         for voce in param["voci"]:
-                            if voce.get("d"): d_links.append((voce.get("d"), "Menu '" + str(voce.get("n", "Voce")) + "'"))
+                            v_val = str(voce.get("d", "")).strip()
+                            v_name = str(voce.get("n", "Voce"))
+                            if v_val and v_val != "undefined": 
+                                d_links.append((v_val, "Menu '" + v_name + "'"))
+                            else:
+                                unlinked_elements.append("Menu '" + v_name + "'")
                             
                     for d, ctx in d_links:
                         if d.startswith("http"):
@@ -323,6 +356,7 @@ async def crawl_site(page, start_url, max_pages=50, is_flazio=False, original_do
                 "html": html_content,
                 "links": links,
                 "link_contexts": link_contexts,
+                "unlinked_elements": unlinked_elements,
                 "videos": videos,
                 "images_ratios": images_ratios,
                 "design_system": design_system,
@@ -424,6 +458,49 @@ def analyze_structure(original_site_data, imported_site_data, original_domain):
             continue
             
         imp_data = imported_site_data[path]
+        
+        def normalize_path_for_compare(p):
+            p = p.lower()
+            if p.endswith('.html'): p = p[:-5]
+            if p.endswith('.php'): p = p[:-4]
+            if p.endswith('.htm'): p = p[:-4]
+            p = p.strip('/')
+            return p if p else "/"
+
+        # Controllo Bottoni e Menu Scollegati (Flazio)
+        unlinked = imp_data.get('unlinked_elements', [])
+        for ul in unlinked:
+            errors.append({
+                "path": path,
+                "type": "Pulsante/Menu Scollegato",
+                "severity": "Media",
+                "icon": "⚠️",
+                "detail": f"Nel sito importato è presente il {ul} che non ha alcun link o destinazione impostata.",
+                "ai_feedback": ""
+            })
+
+        # Controllo Link Mancanti
+        orig_internal_links = {}
+        for l in orig_data['links']:
+            if get_domain(l) == original_domain:
+                p = normalize_path_for_compare(urllib.parse.urlparse(l).path)
+                orig_internal_links[p] = orig_data.get('link_contexts', {}).get(l, "")
+
+        imp_internal_links = {normalize_path_for_compare(urllib.parse.urlparse(l).path) for l in imp_data['links'] if get_domain(l) == get_domain(imp_data['url'])}
+        
+        missing_paths = set(orig_internal_links.keys()) - imp_internal_links
+        for missing_path in missing_paths:
+            if missing_path == "/" and path == "/": continue
+            ctx = orig_internal_links[missing_path]
+            ctx_str = f" ({ctx})" if ctx else ""
+            errors.append({
+                "path": path,
+                "type": "Link/Bottone Mancante o Errato",
+                "severity": "Alta",
+                "icon": "🔗",
+                "detail": f"Nel sito originale c'era un link logico verso `/{missing_path}`{ctx_str}, ma nel sito importato non c'è nessun collegamento verso quella pagina.",
+                "ai_feedback": ""
+            })
         
         # Check similarità lunghezza testo (heuristic check)
         orig_len = len(orig_data['text'])
@@ -632,7 +709,11 @@ async def main():
         
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context() # Niente viewport fisso, non scattiamo foto
+            # Impostiamo una risoluzione Desktop Full HD fissa con qualità Retina (scale=2) per screenshot perfetti
+            context = await browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                device_scale_factor=2
+            )
             page = await context.new_page()
             
             original_site_data = await crawl_site(page, original_url, max_pages=args.max_pages, original_domain_name=safe_domain_name)
