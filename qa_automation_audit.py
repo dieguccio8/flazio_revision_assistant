@@ -10,8 +10,6 @@ os.environ["GRPC_ENABLE_FORK_SUPPORT"] = "1"
 import visual_analyzer
 import argparse
 import asyncio
-import ai_analyzer
-from dotenv import load_dotenv
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -589,19 +587,13 @@ def analyze_structure(original_site_data, imported_site_data, original_url, impo
         if orig_len > 0:
             diff_ratio = (imp_len / orig_len) * 100
             if diff_ratio < 60:
-                ai_text_feedback = ""
-                # Chiamata AI se il testo differisce pesantemente
-                ai_feedback = ai_analyzer.analyze_content_diff(orig_data['text'], imp_data['text'], path)
-                if ai_feedback and not ai_feedback.startswith("⚠️"):
-                    ai_text_feedback = ai_feedback
-                
                 errors.append({
                     "path": path,
                     "type": "Testo Mancante",
                     "severity": "Media",
                     "icon": "🟠",
                     "detail": f"Il sito importato ha molto meno testo ({imp_len} char) rispetto all'originale ({orig_len} char). Controlla se mancano sezioni.",
-                    "ai_feedback": ai_text_feedback
+                    "ai_feedback": ""
                 })
                 
         # Check Video
@@ -680,24 +672,13 @@ def analyze_structure(original_site_data, imported_site_data, original_url, impo
         if diff_percent > 15.0:
             diff_abs_path = os.path.abspath(diff_img_path)
             
-            # Richiedi analisi visiva all'AI se la diff è superiore al 15%
-            print(f"    - [AI] Analisi visiva in corso per {path} ({diff_percent:.1f}% diff)...")
-            import time
-            _start_t = time.time()
-            ai_vision_feedback_raw = ai_analyzer.analyze_visual_regression(orig_img_path, imp_img_path, diff_percent)
-            print(f"      -> Completata in {time.time() - _start_t:.1f} secondi.")
-            
-            ai_vision_feedback = ""
-            if ai_vision_feedback_raw and not ai_vision_feedback_raw.startswith("⚠️"):
-                ai_vision_feedback = ai_vision_feedback_raw
-            
             errors.append({
                 "path": path,
                 "type": "Visual Regression",
                 "severity": "Media",
                 "icon": "🟣",
                 "detail": f"Trovata forte deviazione grafica ({diff_percent:.1f}% di pixel diversi). [Vedi Diff](file://{diff_abs_path})",
-                "ai_feedback": ai_vision_feedback
+                "ai_feedback": ""
             })
 
         # (Rimosso il controllo sul numero dei link perché Flazio usa <li> con Javascript invece di <a>,
@@ -709,24 +690,13 @@ def generate_report(link_errors, structure_errors):
     all_errors = link_errors + structure_errors
     total_errors = len(all_errors)
     
-    report = f"""# Report di QA Automation - Migrazione Flazio (Analisi Deterministica Potenziata)
+    report = f"""# Report di QA Automation - Migrazione Flazio (Analisi Deterministica)
 
 ## 📊 Sintesi Quantitativa
 - **Totale anomalie riscontrate**: {total_errors}
-- *Nota: Questa analisi matematica e basata su AI confronta pagine, quantità di testi, aspetto visivo e destinazione dei link tra sito originale e importato.*
+- *Nota: Questa analisi matematica confronta pagine, quantità di testi, aspetto visivo e destinazione dei link tra sito originale e importato.*
 
 """
-    
-    print("[*] Sintesi AI del report in corso...")
-    # Raccogliamo solo gli errori testuali per non superare il limite di token dell'AI
-    raw_errors_lines = []
-    for e in all_errors:
-        raw_errors_lines.append(f"{e['path']}: {e['type']} - {e['detail']} {e['ai_feedback']}")
-    raw_errors = "\n".join(raw_errors_lines)
-    ai_summary = ai_analyzer.generate_executive_summary(raw_errors)
-    
-    if ai_summary and not ai_summary.startswith("⚠️"):
-        report += f"## 🤖 Executive Summary (Generato con AI)\n{ai_summary}\n\n---\n\n"
         
     if total_errors == 0:
         report += "✅ **Nessun Errore Trovato!** Non sono state trovate discrepanze strutturali o link rotti.\n"
@@ -742,10 +712,6 @@ def generate_report(link_errors, structure_errors):
             for e in page_errors:
                 report += f"- {e['icon']} **{e['type']}** *(Gravità: {e['severity']})*\n"
                 report += f"  - **Dettaglio:** {e['detail']}\n"
-                if e['ai_feedback']:
-                    # Indenta il feedback AI in modo che stia bene nel markdown
-                    ai_fb = e['ai_feedback'].replace("\n", "\n    ")
-                    report += f"  - 🤖 **AI Feedback:** {ai_fb}\n"
             report += "\n---\n\n"
         
     report += """
@@ -757,9 +723,8 @@ def generate_report(link_errors, structure_errors):
     return report
 
 async def main():
-    load_dotenv() # Carica le variabili da .env
     
-    parser = argparse.ArgumentParser(description="Web QA Automation Script for Flazio Migrations (AI Powered)")
+    parser = argparse.ArgumentParser(description="Web QA Automation Script for Flazio Migrations")
     parser.add_argument("--original", required=False, help="URL della Home del sito originale")
     parser.add_argument("--imported", required=False, help="URL della Home del sito importato su Flazio")
     parser.add_argument("--max-pages", type=int, default=50, help="Numero massimo di pagine da scansionare (default: 50)")
@@ -783,7 +748,7 @@ async def main():
             args.imported = None
             continue
 
-        print(f"\n[*] Inizio analisi comparativa STRUTTURALE (Senza AI)...")
+        print(f"\n[*] Inizio analisi comparativa STRUTTURALE...")
         print(f"[*] Originale: {original_url}")
         print(f"[*] Importato: {imported_url}\n")
         
